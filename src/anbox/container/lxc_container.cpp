@@ -343,8 +343,8 @@ void LxcContainer::start(const Configuration &configuration) {
   set_config_item(lxc_config_tty_max_key, "0");
   set_config_item(lxc_config_uts_name_key, "anbox");
 
-  set_config_item("lxc.group.devices.deny", "");
-  set_config_item("lxc.group.devices.allow", "");
+  set_config_item("lxc.cgroup2.devices.deny", "");
+  set_config_item("lxc.cgroup2.devices.allow", "");
 
   // We can't move bind-mounts, so don't use /dev/lxc/
   set_config_item(lxc_config_tty_dir_key, "");
@@ -391,7 +391,7 @@ void LxcContainer::start(const Configuration &configuration) {
   // child profile snap.anbox.container-manager//lxc too.
   set_config_item("lxc.apparmor.profile", "snap.anbox.container-manager//container");
 #else
-  set_config_item(lxc_config_apparmor_profile_key, "unconfined");
+  //set_config_item(lxc_config_apparmor_profile_key, "unconfined");
 #endif
 
   if (!privileged_)

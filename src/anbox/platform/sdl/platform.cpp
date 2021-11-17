@@ -24,6 +24,8 @@
 #include "anbox/platform/sdl/keycode_converter.h"
 #include "anbox/platform/sdl/window.h"
 #include "anbox/platform/sdl/audio_sink.h"
+#include "anbox/platform/alsa/audio_source.h"
+
 #include "anbox/wm/manager.h"
 
 #include <boost/throw_exception.hpp>
@@ -32,7 +34,9 @@
 #include <sys/types.h>
 #pragma GCC diagnostic pop
 
-namespace anbox::platform::sdl {
+namespace anbox {
+namespace platform {
+namespace sdl {
 Platform::Platform(
     const std::shared_ptr<input::Manager> &input_manager,
     const Configuration &config)
@@ -40,7 +44,6 @@ Platform::Platform(
       event_thread_running_(false),
       ime_thread_running_(false),
       config_(config) {
-
   // Don't block the screensaver from kicking in. It will be blocked
   // by the desktop shell already and we don't have to do this again.
   // If we would leave this enabled it will prevent systems from
@@ -53,24 +56,13 @@ Platform::Platform(
   SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
 #endif
 
-#ifdef SDL_HINT_TOUCH_MOUSE_EVENTS
-  // Don't emulate mouse events from touch, we're handling touch ourselves.
-  // Available since SDL 2.0.10
-  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-#endif
-
-  auto sdl_init_flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS;
-  if (config_.rootless)
-    sdl_init_flags = SDL_INIT_AUDIO | SDL_INIT_EVENTS;
-  if (SDL_Init(sdl_init_flags) < 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS) < 0) {
     const auto message = utils::string_format("Failed to initialize SDL: %s", SDL_GetError());
     BOOST_THROW_EXCEPTION(std::runtime_error(message));
   }
 
   auto display_frame = graphics::Rect::Invalid;
   if (config_.display_frame == graphics::Rect::Invalid) {
-    // We would need to init video to fetch display info
-    if (config_.rootless) SDL_VideoInit(NULL);
     for (auto n = 0; n < SDL_GetNumVideoDisplays(); n++) {
       SDL_Rect r;
       if (SDL_GetDisplayBounds(n, &r) != 0) continue;
@@ -82,7 +74,6 @@ Platform::Platform(
       else
         display_frame.merge(frame);
     }
-    if (config_.rootless) SDL_VideoQuit();
 
     if (display_frame == graphics::Rect::Invalid)
       BOOST_THROW_EXCEPTION(
@@ -147,13 +138,13 @@ Platform::~Platform() {
   if (event_thread_running_) {
     event_thread_running_ = false;
     event_thread_.join();
-    if (ime_thread_running_) {
-	    ime_thread_running_ = false;
-	    ime_thread_.join();
-	  }
-	  if (ime_socket_ != -1) {
-	    close(ime_socket_);
-	  }
+  }
+  if (ime_thread_running_) {
+    ime_thread_running_ = false;
+    ime_thread_.join();
+  }
+  if (ime_socket_ != -1) {
+    close(ime_socket_);
   }
 }
 
@@ -164,49 +155,50 @@ void Platform::set_renderer(const std::shared_ptr<Renderer> &renderer) {
 void Platform::set_window_manager(const std::shared_ptr<wm::Manager> &window_manager) {
   window_manager_ = window_manager;
 }
+
 // Added for Chinese input anbox begin
 void Platform::create_ime_socket() {
-	  int ime_socket = -1;
-	  int client_socket = -1;
-	  int rc = -1;
-	  int len = 0;
-	  struct sockaddr_un socket_addr, client_addr;
-	  memset(&socket_addr, 0, sizeof(socket_addr));
-	  DEBUG("Starting create_ime_socket thread");
-	  ime_socket = socket(AF_UNIX, SOCK_STREAM, 0);
-	  if (ime_socket == -1) {
-	    ERROR("Create ime socket failed");
-	    return;
-	  }
-	  socket_addr.sun_family = AF_UNIX;
-	  strcpy(socket_addr.sun_path, IME_SOCKET_PATH);
-	  unlink(IME_SOCKET_PATH);
-	  rc = bind(ime_socket, reinterpret_cast<struct sockaddr *>(&socket_addr), sizeof(socket_addr));
-	  if (rc == -1) {
-	    ERROR("bind ime socket failed");
-	    close(ime_socket);
-	    return;
-	  }
-	  rc = listen(ime_socket, 1);
-	  if (rc == -1) {
-	    ERROR("Listen ime socket failed");
-	    close(ime_socket);
-	    return;
-	  }
-	  DEBUG("Before ime socket accept");
-	  client_socket = accept(ime_socket, reinterpret_cast<struct sockaddr*>(&client_addr), 
-	      reinterpret_cast<socklen_t*>(&len));
-	  if (client_socket == -1) {
-	    ERROR("Accept ime socket failed");
-	    close(ime_socket);
-	    return;
-	  }
-	  ime_fd_ = client_socket;
-	  ime_socket_ = ime_socket;
-	  DEBUG("accept ime socket successful");
+  int ime_socket = -1;
+  int client_socket = -1;
+  int rc = -1;
+  int len = 0;
+  struct sockaddr_un socket_addr, client_addr;
+  memset(&socket_addr, 0, sizeof(socket_addr));
+  DEBUG("Starting create_ime_socket thread");
+  ime_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (ime_socket == -1) {
+    ERROR("Create ime socket failed");
+    return;
+  }
+  socket_addr.sun_family = AF_UNIX;
+  strcpy(socket_addr.sun_path, IME_SOCKET_PATH);
+  unlink(IME_SOCKET_PATH);
+  rc = bind(ime_socket, reinterpret_cast<struct sockaddr *>(&socket_addr), sizeof(socket_addr));
+  if (rc == -1) {
+    ERROR("bind ime socket failed");
+    close(ime_socket);
+    return;
+  }
+  rc = listen(ime_socket, 1);
+  if (rc == -1) {
+    ERROR("Listen ime socket failed");
+    close(ime_socket);
+    return;
+  }
+  DEBUG("Before ime socket accept");
+  client_socket = accept(ime_socket, reinterpret_cast<struct sockaddr*>(&client_addr), 
+      reinterpret_cast<socklen_t*>(&len));
+  if (client_socket == -1) {
+    ERROR("Accept ime socket failed");
+    close(ime_socket);
+    return;
+  }
+  ime_fd_ = client_socket;
+  ime_socket_ = ime_socket;
+  DEBUG("accept ime socket successful");
 }
-	// Added for Chinese input anbox end
-	
+// Added for Chinese input anbox end
+
 void Platform::process_events() {
   event_thread_running_ = true;
   int flag = 0;
@@ -216,8 +208,6 @@ void Platform::process_events() {
     while (SDL_WaitEventTimeout(&event, 100)) {
       switch (event.type) {
         case SDL_QUIT:
-          video_has_been_closed_ = true;
-          DEBUG("SDL_QUIT");
           break;
         case SDL_WINDOWEVENT:
           for (auto &iter : windows_) {
@@ -230,10 +220,10 @@ void Platform::process_events() {
           }
           break;
         case SDL_KEYDOWN:
-	 flag = 1;
-         if (keyboard_)
+          flag = 1;
+          if (keyboard_)
             process_input_event(event);
-         break;
+          break;
         case SDL_KEYUP:
           flag = 0;
           if (keyboard_)
@@ -260,12 +250,13 @@ void Platform::process_events() {
     }
   }
 }
+
 void Platform::input_key_event(const SDL_Scancode &scan_code, std::int32_t down_or_up) {  // down_or_up: 1-down,0-up
-	  std::vector<input::Event> keyboard_events;
-	  std::uint16_t code = KeycodeConverter::convert(scan_code);
-	  keyboard_events.push_back({EV_KEY, code, down_or_up});
-	  keyboard_->send_events(keyboard_events);
-	}
+  std::vector<input::Event> keyboard_events;
+  std::uint16_t code = KeycodeConverter::convert(scan_code);
+  keyboard_events.push_back({EV_KEY, code, down_or_up});
+  keyboard_->send_events(keyboard_events);
+}
 
 void Platform::process_input_event(const SDL_Event &event) {
   std::vector<input::Event> mouse_events;
@@ -353,8 +344,7 @@ void Platform::process_input_event(const SDL_Event &event) {
       push_finger_up(event.tfinger.fingerId, touch_events);
       break;
     }
-	case SDL_FINGERMOTION: {
-
+    case SDL_FINGERMOTION: {
       if (!calculate_touch_coordinates(event, x, y))
         break;
       push_finger_motion(x, y, event.tfinger.fingerId, touch_events);
@@ -365,7 +355,7 @@ void Platform::process_input_event(const SDL_Event &event) {
   }
 
   if (mouse_events.size() > 0) {
-    mouse_events.push_back({EV_SYN, SYN_REPORT, 0});      
+    mouse_events.push_back({EV_SYN, SYN_REPORT, 0});
     pointer_->send_events(mouse_events);
   }
 
@@ -377,52 +367,52 @@ void Platform::process_input_event(const SDL_Event &event) {
 }
 
 int Platform::find_touch_slot(int id){
-	  for (int i = 0; i < MAX_FINGERS; i++) {
-	    if (touch_slots[i] == id)
-	      return i;
-	  }
-	  return -1;
+  for (int i = 0; i < MAX_FINGERS; i++) {
+    if (touch_slots[i] == id)
+      return i;
+  }
+  return -1;
 }
 
 void Platform::push_slot(std::vector<input::Event> &touch_events, int slot){
   if (last_slot != slot) {
-	    touch_events.push_back({EV_ABS, ABS_MT_SLOT, slot});
-	    last_slot = slot;
-	  }
+    touch_events.push_back({EV_ABS, ABS_MT_SLOT, slot});
+    last_slot = slot;
+  }
 }
 
 void Platform::push_finger_down(int x, int y, int finger_id, std::vector<input::Event> &touch_events){
-	  int slot = find_touch_slot(-1);
-	  if (slot == -1) {
-	    DEBUG("no free slot!");
-	    return;
-	  }
-	  touch_slots[slot] = finger_id;
-	  push_slot(touch_events, slot);
-	  touch_events.push_back({EV_ABS, ABS_MT_TRACKING_ID, static_cast<std::int32_t>(finger_id % MAX_TRACKING_ID + 1)});
-	  touch_events.push_back({EV_ABS, ABS_MT_POSITION_X, x});
-	  touch_events.push_back({EV_ABS, ABS_MT_POSITION_Y, y});
-	  touch_events.push_back({EV_SYN, SYN_REPORT, 0});
+  int slot = find_touch_slot(-1);
+  if (slot == -1) {
+    DEBUG("no free slot!");
+    return;
+  }
+  touch_slots[slot] = finger_id;
+  push_slot(touch_events, slot);
+  touch_events.push_back({EV_ABS, ABS_MT_TRACKING_ID, static_cast<std::int32_t>(finger_id % MAX_TRACKING_ID + 1)});
+  touch_events.push_back({EV_ABS, ABS_MT_POSITION_X, x});
+  touch_events.push_back({EV_ABS, ABS_MT_POSITION_Y, y});
+  touch_events.push_back({EV_SYN, SYN_REPORT, 0});
 }
 
 void Platform::push_finger_up(int finger_id, std::vector<input::Event> &touch_events){
   int slot = find_touch_slot(finger_id);
-	  if (slot == -1)
-	    return;
-	  push_slot(touch_events, slot);
-	  touch_events.push_back({EV_ABS, ABS_MT_TRACKING_ID, -1});
-	  touch_events.push_back({EV_SYN, SYN_REPORT, 0});
-	  touch_slots[slot] = -1;
+  if (slot == -1)
+    return;
+  push_slot(touch_events, slot);
+  touch_events.push_back({EV_ABS, ABS_MT_TRACKING_ID, -1});
+  touch_events.push_back({EV_SYN, SYN_REPORT, 0});
+  touch_slots[slot] = -1;
 }
 
 void Platform::push_finger_motion(int x, int y, int finger_id, std::vector<input::Event> &touch_events){
   int slot = find_touch_slot(finger_id);
-	  if (slot == -1)
-	    return;
-	  push_slot(touch_events, slot);
-	  touch_events.push_back({EV_ABS, ABS_MT_POSITION_X, x});
-	  touch_events.push_back({EV_ABS, ABS_MT_POSITION_Y, y});
-	  touch_events.push_back({EV_SYN, SYN_REPORT, 0});
+  if (slot == -1)
+    return;
+  push_slot(touch_events, slot);
+  touch_events.push_back({EV_ABS, ABS_MT_POSITION_X, x});
+  touch_events.push_back({EV_ABS, ABS_MT_POSITION_Y, y});
+  touch_events.push_back({EV_SYN, SYN_REPORT, 0});
 }
 
 
@@ -498,16 +488,8 @@ std::shared_ptr<wm::Window> Platform::create_window(
     return nullptr;
   }
 
-  // Force video init again after sdl has closed
-  if (config_.rootless && video_has_been_closed_) {
-    DEBUG("forcing video init");
-    SDL_VideoInit(NULL);
-    video_has_been_closed_ = false;
-  }
-
   auto id = next_window_id();
-  auto w = std::make_shared<Window>(renderer_, id, task, shared_from_this(), frame, title,
-		  !window_size_immutable_, !config_.server_side_decoration);
+  auto w = std::make_shared<Window>(renderer_, id, task, shared_from_this(), frame, title, !window_size_immutable_);
   focused_sdl_window_id_ = w->window_id();
   windows_.insert({id, w});
   return w;
@@ -589,11 +571,12 @@ std::shared_ptr<audio::Sink> Platform::create_audio_sink() {
 }
 
 std::shared_ptr<audio::Source> Platform::create_audio_source() {
-  ERROR("Not implemented");
-  return nullptr;
+  return std::make_shared<AudioSource>();
 }
 
 bool Platform::supports_multi_window() const {
   return true;
 }
-}
+} // namespace sdl
+} // namespace platform
+} // namespace anbox

@@ -191,6 +191,12 @@ void Platform::process_events() {
         case SDL_FINGERMOTION:
           process_input_event(event);
           break;
+        case SDL_TEXTINPUT:
+          WARNING("Input Event TEXT=%s TYPE=%d WINDOWID=%d", event.text.text, event.type, event.text.windowID);
+          if (flag == 0 && ime_fd_) {
+            send(ime_fd_, event.text.text, strlen(event.text.text), 0);
+          }
+          break;
         default:
           break;
       }

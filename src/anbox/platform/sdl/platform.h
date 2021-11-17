@@ -29,16 +29,19 @@
 
 class Renderer;
 
-namespace anbox::input {
-  class Device;
-  class Manager;
-}
+namespace anbox {
+namespace input {
+class Device;
+class Manager;
+}  // namespace input
+namespace wm {
+class Manager;
+} // namespace wm
+namespace platform {
+namespace sdl {
 
-namespace anbox::wm {
-  class Manager;
-}
+static const char IME_SOCKET_PATH[] = "/tmp/ime_socket";
 
-namespace anbox::platform::sdl {
 class Platform : public std::enable_shared_from_this<Platform>,
                        public platform::BasePlatform,
                        public Window::Observer {
@@ -52,6 +55,7 @@ class Platform : public std::enable_shared_from_this<Platform>,
       const anbox::graphics::Rect &frame,
       const std::string &title) override;
 
+  void input_key_event(const SDL_Scancode &scan_code, std::int32_t down_or_up) override;
   void window_deleted(const Window::Id &id) override;
   void window_wants_focus(const Window::Id &id) override;
   void window_moved(const Window::Id &id, const std::int32_t &x,
@@ -90,20 +94,25 @@ class Platform : public std::enable_shared_from_this<Platform>,
   std::map<Window::Id, std::weak_ptr<Window>> windows_;
   std::shared_ptr<Window> current_window_;
   std::thread event_thread_;
+  std::thread ime_thread_;
   bool event_thread_running_;
+  bool ime_thread_running_;
   std::shared_ptr<input::Device> pointer_;
   std::shared_ptr<input::Device> keyboard_;
   std::shared_ptr<input::Device> touch_;
   graphics::Rect display_frame_;
   bool window_size_immutable_ = false;
   std::uint32_t focused_sdl_window_id_ = 0;
-  bool video_has_been_closed_ = false;
   Configuration config_;
 
   static const int MAX_FINGERS = 10;
   static const int MAX_TRACKING_ID = 10;
+
   int touch_slots[MAX_FINGERS];
   int last_slot = -1;
+  int ime_fd_ = -1;
+  int ime_socket_ = -1;
+  void create_ime_socket();
 
   int find_touch_slot(int id);
   void push_slot(std::vector<input::Event> &touch_events, int slot);
@@ -111,5 +120,8 @@ class Platform : public std::enable_shared_from_this<Platform>,
   void push_finger_up(int finger_id, std::vector<input::Event> &touch_events);
   void push_finger_motion(int x, int y, int finger_id, std::vector<input::Event> &touch_events);
 };
-}
+} // namespace sdl
+} // namespace platform
+} // namespace anbox
+
 #endif
